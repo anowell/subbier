@@ -1,0 +1,73 @@
+[workspace]
+resolver = "3"
+members = ["crates/libsubby", "crates/subbier-cli", "crates/subbier-macos"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+repository = "https://github.com/anowell/subbier"
+authors = ["Anthony Nowell <anthony@howie.ai>"]
+
+# Versions are pinned deliberately; read the notes below before bumping.
+[workspace.dependencies]
+libsubby = { path = "crates/libsubby" }
+
+# --- async runtime / http ---
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "signal", "fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
+axum = { version = "0.8.9", features = ["http1", "json", "tokio"], default-features = false }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "catch-panic"] }
+http = "1.3"
+http-body-util = "0.1"
+bytes = "1.10"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+# `rustls-no-provider` + ring avoids aws-lc's C toolchain; the provider is
+# installed once in libsubby::http::init(). OS root certs still work.
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "form", "stream", "http2", "charset", "system-proxy", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+# --- data ---
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+kdl = "6.7.1"
+jiff = { version = "0.2.35", features = ["serde"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "jiff"] }
+
+# --- util ---
+thiserror = "2"
+url = "2.5"
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.9"
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "6"
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# --- CLI terminal UI (`subbier watch`) ---
+# Default features re-export `ratatui::crossterm` and gate `Chart` behind `all-widgets`.
+ratatui = "0.30.2"
+
+# --- tracing ---
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2.5"
+
+# --- macOS frontend only ---
+# PNG-only: the menu bar mark is the only raster decoded.
+image = { version = "0.25", default-features = false, features = ["png"] }
+tray-icon = "0.24.2"
+muda = "0.19.3"
+objc2 = "0.6"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-core-foundation = "0.3"
+dispatch2 = "0.3.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,23 @@
+[package]
+name = "subbier-cli"
+description = "subbier command line interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "subbier"
+path = "src/main.rs"
+
+[dependencies]
+libsubby = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+jiff = { workspace = true }
+tracing = { workspace = true }
+dirs = { workspace = true }
+ratatui = { workspace = true }

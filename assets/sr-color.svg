@@ -1,0 +1,33 @@
+<!--
+  Subbier.app bundle icon. 1024x1024, macOS rounded-square geometry: an 824x824
+  content square inset 100 on every side, corner radius 185.
+
+  The monogram is THE SAME GEOMETRY as sr.svg, scaled x35 from the 18-unit grid
+  and knocked out in white. One mark, one brand: if you change sr.svg, mirror
+  the path data here. (It is duplicated rather than <use>d so this file stays a
+  single self-contained thing a designer can open.)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F98C56"/>
+      <stop offset="0.55" stop-color="#E8622B"/>
+      <stop offset="1" stop-color="#B33A18"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#rim)"/>
+  <g transform="translate(197,197) scale(35)" fill="#ffffff">
+    <rect x="9" y="3" width="2" height="12"/>
+    <path fill-rule="evenodd" d="
+      M9 3 H14.7 A2.3 2.3 0 0 1 17 5.3 V7.7 A2.3 2.3 0 0 1 14.7 10 H9 Z
+      M11 5 V8 H14 A1 1 0 0 0 15 7 V6 A1 1 0 0 0 14 5 Z"/>
+    <path d="M11 9 L13.828 9 L17 15 L14.172 15 Z"/>
+    <path fill="none" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" stroke-linecap="butt"
+          d="M7.6 6 H3.5 Q2 6 2 7.5 V8.5 Q2 10 3.5 10 H5.5 Q7 10 7 11.5 V12.5 Q7 14 5.5 14 H1.4"/>
+  </g>
+</svg>
