@@ -323,6 +323,7 @@ pub struct ProxyState {
     /// account that served each turn.
     pub transcripts: Arc<TranscriptStore>,
     codex_models: Mutex<codex::ModelCatalog>,
+    codex_client_version: Mutex<codex::ClientVersion>,
     last_error: Mutex<Option<String>>,
 }
 
@@ -359,6 +360,7 @@ impl ProxyState {
                     .expect("sqlite can always open an in-memory database"),
             ),
             codex_models: Mutex::new(codex::ModelCatalog::default()),
+            codex_client_version: Mutex::new(codex::ClientVersion::default()),
             last_error: Mutex::new(None),
             pools: RwLock::new(Vec::new()),
         }
@@ -372,6 +374,17 @@ impl ProxyState {
 
     pub fn set_pools(&self, pools: Vec<PoolConfig>) {
         *self.pools.write().unwrap_or_else(PoisonError::into_inner) = pools;
+    }
+
+    /// `proxy.codex-client-version`; `None` falls through to the installed `codex`.
+    #[must_use]
+    pub fn with_codex_client_version(self, version: Option<String>) -> Self {
+        self.set_codex_client_version(version);
+        self
+    }
+
+    pub fn set_codex_client_version(&self, version: Option<String>) {
+        self.codex_client_version().set_configured(version);
     }
 
     /// An unknown name errors rather than quietly serving the whole proxy: a
@@ -489,6 +502,12 @@ impl ProxyState {
             .last_error
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    pub(crate) fn codex_client_version(&self) -> MutexGuard<'_, codex::ClientVersion> {
+        self.codex_client_version
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(crate) fn codex_models(&self) -> MutexGuard<'_, codex::ModelCatalog> {

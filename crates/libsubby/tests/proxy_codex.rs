@@ -481,7 +481,8 @@ impl Fixture {
             .with_bases(Bases::all(upstream_base))
             .with_tokens(tokens)
             .with_db(db)
-            .with_router(Arc::new(Router::new(settings)));
+            .with_router(Arc::new(Router::new(settings)))
+            .with_codex_client_version(Some("0.147.0".to_owned()));
         if let Some(transcripts) = transcripts {
             proxy_state = proxy_state.with_transcripts(transcripts);
         }
@@ -627,7 +628,8 @@ async fn models_lists_the_upstream_catalog() {
     );
     assert_eq!(
         fixture.fake.model_client_version.lock().unwrap().as_deref(),
-        Some("0.147.0")
+        Some("0.147.0"),
+        "the configured version is sent verbatim"
     );
     // A answers 403 and is skipped; B serves the catalog.
     assert_eq!(fixture.fake.model_hits.load(Ordering::SeqCst), 2);

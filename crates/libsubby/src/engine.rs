@@ -1180,6 +1180,7 @@ impl State {
     fn sync_pools(&self) {
         if let Some(state) = &self.proxy_state {
             state.set_pools(self.config.pools.clone());
+            state.set_codex_client_version(self.config.proxy.codex_client_version.clone());
         }
     }
 
@@ -1730,6 +1731,7 @@ impl State {
                 .with_db(self.db.clone())
                 .with_transcripts(self.transcripts.clone())
                 .with_pools(self.config.pools.clone())
+                .with_codex_client_version(self.config.proxy.codex_client_version.clone())
                 .with_snapshot(self.handle.clone())
                 // A token rotated on the request path reaches our own store
                 // this way, never the vendor's file.

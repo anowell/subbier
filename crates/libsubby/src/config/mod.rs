@@ -64,6 +64,8 @@ pub struct ProxyConfig {
     pub codex: bool,
     /// Front the Anthropic Messages API.
     pub claude: bool,
+    /// Presented to the Codex model catalog, which gates its contents on it.
+    pub codex_client_version: Option<String>,
 }
 
 impl Default for ProxyConfig {
@@ -77,6 +79,7 @@ impl Default for ProxyConfig {
             sticky: None,
             codex: true,
             claude: true,
+            codex_client_version: None,
         }
     }
 }
@@ -412,6 +415,7 @@ struct RawProxy {
     sticky: Option<bool>,
     codex: Option<bool>,
     claude: Option<bool>,
+    codex_client_version: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -450,6 +454,7 @@ impl RawConfig {
                 sticky: self.proxy.sticky,
                 codex: self.proxy.codex.unwrap_or(defaults.proxy.codex),
                 claude: self.proxy.claude.unwrap_or(defaults.proxy.claude),
+                codex_client_version: self.proxy.codex_client_version,
             },
             poll: PollConfig {
                 interval: duration("poll.interval", self.poll.interval)?
@@ -770,6 +775,7 @@ mod tests {
     // sticky #true             // unset = the strategy's default
     codex #true
     claude #true
+    // codex-client-version "0.153.4"   // unset = the installed codex, then a built-in fallback
 }
 
 poll {
@@ -808,6 +814,15 @@ sub "codex:4575f150-…" {
         assert_eq!(
             Config::parse("// only a comment\n").unwrap(),
             Config::default()
+        );
+    }
+
+    #[test]
+    fn a_codex_client_version_is_read() {
+        let config = Config::parse("proxy {\n    codex-client-version \"0.150.0\"\n}").unwrap();
+        assert_eq!(
+            config.proxy.codex_client_version.as_deref(),
+            Some("0.150.0")
         );
     }
 

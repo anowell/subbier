@@ -86,6 +86,13 @@ Upgrading is `cargo install` again, then `subbier service restart`.
 
 subbier is a proxy, not a rewriter. However, a few edits are needed; this is all of them.
 
+**Codex — present a Codex CLI version to the model catalog.** The backend gates
+`GET /v1/models` on the `client_version` it is told, and an old one omits the
+newest models. subbier sends `proxy.codex-client-version` from `config.kdl` if
+set, otherwise the installed `codex --version` (re-checked every 15 minutes),
+otherwise a built-in fallback that each subbier release bumps to the current
+`codex`. Requests themselves carry no client version.
+
 **Claude — prepend the Claude Code identity block.** Anthropic's OAuth tokens are
 issued to Claude Code, and the API only honours them when the `system` array
 *begins* with `You are Claude Code, Anthropic's official CLI for Claude.` — the

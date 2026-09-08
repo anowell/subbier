@@ -15,7 +15,7 @@ authors = ["Anthony Nowell <anthony@howie.ai>"]
 libsubby = { path = "crates/libsubby" }
 
 # --- async runtime / http ---
-tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "signal", "fs", "io-util"] }
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "signal", "fs", "io-util", "process"] }
 tokio-util = { version = "0.7", features = ["io"] }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"], default-features = false }
 tower = "0.5"

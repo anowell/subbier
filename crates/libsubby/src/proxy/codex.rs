@@ -27,8 +27,91 @@ use super::{
     send_retrying, upstream, usage_for_exhaustion,
 };
 
-/// The backend gates its catalog on the Codex CLI version; an unknown one gets a partial list.
-pub const CLIENT_VERSION: &str = "0.147.0";
+/// The backend gates its catalog on the Codex CLI version; bump this last resort on release.
+pub const FALLBACK_CLIENT_VERSION: &str = "0.153.4";
+
+/// How long a `codex --version` answer, or its absence, is believed.
+pub const CLIENT_VERSION_TTL: Duration = Duration::from_secs(15 * 60);
+
+/// Resolved in order: `proxy.codex-client-version`, the installed `codex`, then
+/// [`FALLBACK_CLIENT_VERSION`].
+#[derive(Debug, Default)]
+pub struct ClientVersion {
+    configured: Option<String>,
+    discovered: Option<(Instant, Option<String>)>,
+}
+
+impl ClientVersion {
+    pub fn set_configured(&mut self, version: Option<String>) {
+        self.configured = version
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty());
+    }
+
+    fn resolved(&self) -> Option<&str> {
+        if let Some(configured) = &self.configured {
+            return Some(configured);
+        }
+        self.discovered
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < CLIENT_VERSION_TTL)
+            .map(|(_, found)| found.as_deref().unwrap_or(FALLBACK_CLIENT_VERSION))
+    }
+
+    fn store_discovered(&mut self, found: Option<String>) -> String {
+        self.discovered = Some((Instant::now(), found.clone()));
+        found.unwrap_or_else(|| FALLBACK_CLIENT_VERSION.to_owned())
+    }
+}
+
+/// The guard is dropped before discovery spawns.
+pub(crate) async fn client_version(state: &ProxyState) -> String {
+    if let Some(version) = state.codex_client_version().resolved() {
+        return version.to_owned();
+    }
+    let found = installed_codex_version().await;
+    state.codex_client_version().store_discovered(found)
+}
+
+/// `codex --version` prints `codex-cli 0.153.4`.
+async fn installed_codex_version() -> Option<String> {
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::process::Command::new("codex")
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await;
+    let output = match output {
+        Ok(Ok(output)) if output.status.success() => output,
+        Ok(Ok(output)) => {
+            tracing::debug!(status = %output.status, "codex --version failed");
+            return None;
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "codex --version could not run");
+            return None;
+        }
+        Err(_) => {
+            tracing::debug!("codex --version timed out");
+            return None;
+        }
+    };
+    let version = parse_version_output(&String::from_utf8_lossy(&output.stdout))?;
+    tracing::debug!(%version, "discovered the installed codex version");
+    Some(version)
+}
+
+fn parse_version_output(stdout: &str) -> Option<String> {
+    let token = stdout.split_whitespace().last()?;
+    let shaped = token.split('.').count() >= 2
+        && token.starts_with(|c: char| c.is_ascii_digit())
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    shaped.then(|| token.to_owned())
+}
 
 pub const MODEL_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
@@ -41,9 +124,9 @@ pub fn responses_url(base: &str) -> String {
 }
 
 #[must_use]
-pub fn models_url(base: &str) -> String {
+pub fn models_url(base: &str, client_version: &str) -> String {
     format!(
-        "{}/codex/models?client_version={CLIENT_VERSION}",
+        "{}/codex/models?client_version={client_version}",
         base.trim_end_matches('/')
     )
 }
@@ -973,6 +1056,7 @@ enum CatalogAttempt {
 async fn fetch_catalog(state: &Arc<ProxyState>, entry: &SubEntry) -> CatalogAttempt {
     let id = entry.id;
     let mut sub = entry.sub.clone();
+    let client_version = client_version(state).await;
 
     for forced in [false, true] {
         if forced {
@@ -1001,7 +1085,7 @@ async fn fetch_catalog(state: &Arc<ProxyState>, entry: &SubEntry) -> CatalogAtte
         authorization.set_sensitive(true);
 
         let response = crate::http::client()
-            .get(models_url(state.base(Provider::Codex)))
+            .get(models_url(state.base(Provider::Codex), &client_version))
             .timeout(MODEL_REQUEST_TIMEOUT)
             .header(reqwest::header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id_header(&sub))
@@ -1070,6 +1154,47 @@ pub fn parse_catalog(body: &str) -> Option<Catalog> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_client_version_prefers_config_then_discovery_then_the_fallback() {
+        let mut v = ClientVersion::default();
+        assert_eq!(v.resolved(), None);
+
+        assert_eq!(v.store_discovered(Some("0.150.0".to_owned())), "0.150.0");
+        assert_eq!(v.resolved(), Some("0.150.0"));
+
+        v.set_configured(Some("  0.149.0 ".to_owned()));
+        assert_eq!(v.resolved(), Some("0.149.0"));
+        v.set_configured(Some(String::new()));
+        assert_eq!(v.resolved(), Some("0.150.0"));
+
+        assert_eq!(v.store_discovered(None), FALLBACK_CLIENT_VERSION);
+        assert_eq!(
+            v.resolved(),
+            Some(FALLBACK_CLIENT_VERSION),
+            "no codex on PATH is remembered too, not retried per request"
+        );
+
+        v.discovered = Some((
+            Instant::now() - CLIENT_VERSION_TTL - Duration::from_secs(1),
+            Some("0.150.0".to_owned()),
+        ));
+        assert_eq!(v.resolved(), None);
+    }
+
+    #[test]
+    fn the_codex_version_line_parses() {
+        assert_eq!(
+            parse_version_output("codex-cli 0.153.4\n").as_deref(),
+            Some("0.153.4")
+        );
+        assert_eq!(
+            parse_version_output("codex-cli 0.154.0-alpha.3\n").as_deref(),
+            Some("0.154.0-alpha.3")
+        );
+        assert_eq!(parse_version_output(""), None);
+        assert_eq!(parse_version_output("command not found"), None);
+    }
 
     fn object(json: &str) -> Map<String, Value> {
         match serde_json::from_str(json).unwrap() {
