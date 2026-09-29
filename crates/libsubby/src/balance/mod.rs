@@ -22,6 +22,9 @@ pub const DEFAULT_USAGE_DEADLINE: Duration = Duration::from_secs(5);
 /// How long a sub is quarantined when we have no reset information at all.
 pub const BLIND_EXHAUSTION: SignedDuration = SignedDuration::from_secs(5 * 60);
 
+/// A fall this far below the quarantine level is a reset, not rounding jitter.
+pub const RESET_DROP_PCT: f32 = 10.0;
+
 /// The substrings that make a 429 a real *plan exhausted* error rather than an
 /// ordinary rate limit, matched case-insensitively.
 pub const USAGE_LIMIT_MARKERS: [&str; 7] = [
@@ -478,17 +481,25 @@ struct State {
     strategies: [StrategyState; 2],
     /// In memory only: a restart re-probes rather than resurrecting a stale
     /// opinion about an account.
-    exhausted: BTreeMap<SubId, Timestamp>,
+    exhausted: BTreeMap<SubId, Quarantine>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Quarantine {
+    until: Timestamp,
+    /// The effective percentage when quarantined, if known.
+    at_pct: Option<f32>,
 }
 
 impl State {
     fn sweep(&mut self, now: Timestamp) {
-        self.exhausted.retain(|_, until| *until > now);
+        self.exhausted.retain(|_, q| q.until > now);
     }
 
     fn exhaust(&mut self, sub: SubId, usage: Option<&Usage>, now: Timestamp) -> Timestamp {
         let until = exhaust_until(now, usage);
-        self.exhausted.insert(sub, until);
+        let at_pct = usage.map(effective_pct);
+        self.exhausted.insert(sub, Quarantine { until, at_pct });
         for current in &mut self.current {
             if *current == Some(sub) {
                 *current = None;
@@ -576,7 +587,7 @@ impl Router {
     pub fn exhausted_until(&self, sub: SubId) -> Option<Timestamp> {
         let mut state = self.lock();
         state.sweep(Timestamp::now());
-        state.exhausted.get(&sub).copied()
+        state.exhausted.get(&sub).map(|q| q.until)
     }
 
     /// For `SubHealth::Exhausted` in the next snapshot.
@@ -584,12 +595,30 @@ impl Router {
     pub fn exhaustions(&self) -> Vec<(SubId, Timestamp)> {
         let mut state = self.lock();
         state.sweep(Timestamp::now());
-        state.exhausted.iter().map(|(s, u)| (*s, *u)).collect()
+        state.exhausted.iter().map(|(s, q)| (*s, q.until)).collect()
     }
 
     /// Lift `sub`'s quarantine early.
     pub fn clear_exhaustion(&self, sub: SubId) {
         self.lock().exhausted.remove(&sub);
+    }
+
+    /// Lift on the provider's all-clear or a [`RESET_DROP_PCT`] fall: the usage
+    /// endpoint lags a cut-off, but only a reset (even an early one that moves
+    /// no `resets_at`) makes usage fall. Returns the lifted quarantine's end.
+    pub fn lift_if_recovered(&self, sub: SubId, usage: &Usage) -> Option<Timestamp> {
+        let mut state = self.lock();
+        state.sweep(Timestamp::now());
+        let quarantine = *state.exhausted.get(&sub)?;
+        let all_clear = usage.limit_reached == Some(false);
+        let reset = quarantine
+            .at_pct
+            .is_some_and(|at| effective_pct(usage) <= at - RESET_DROP_PCT);
+        if !(all_clear || reset) {
+            return None;
+        }
+        state.exhausted.remove(&sub);
+        Some(quarantine.until)
     }
 
     /// What [`Router::select_in`] would consider right now, in `SubId` order.
@@ -707,7 +736,7 @@ impl Router {
             if live.is_empty() {
                 let next_reset = usable
                     .iter()
-                    .filter_map(|s| state.exhausted.get(&s.sub).copied())
+                    .filter_map(|s| state.exhausted.get(&s.sub).map(|q| q.until))
                     .min();
                 return Err(SelectError::AllExhausted {
                     provider,
@@ -813,7 +842,7 @@ impl Router {
         if candidates.is_empty() {
             let next_reset = live
                 .iter()
-                .filter_map(|s| state.exhausted.get(&s.sub).copied())
+                .filter_map(|s| state.exhausted.get(&s.sub).map(|q| q.until))
                 .min();
             return Err(SelectError::AllExhausted {
                 provider,
@@ -1315,10 +1344,13 @@ mod tests {
                 .is_err()
         );
 
-        router
-            .lock()
-            .exhausted
-            .insert(SubId(1), Timestamp::now() - hours(1));
+        router.lock().exhausted.insert(
+            SubId(1),
+            Quarantine {
+                until: Timestamp::now() - hours(1),
+                at_pct: None,
+            },
+        );
         assert_eq!(router.exhaustions(), Vec::new());
         assert_eq!(
             router
@@ -1686,6 +1718,29 @@ mod tests {
             limit_reached: Some(false),
             ..full
         }));
+    }
+
+    #[test]
+    fn a_quarantine_lifts_on_an_all_clear_or_a_fall_but_not_on_a_lagging_reading() {
+        let router = router(StrategyKind::LowestUsage);
+        let at = |pct| usage(None, Some(UsageWindow::from_pct(pct)));
+
+        // Cut off by a 429 before the usage endpoint caught up.
+        router.on_failure(SubId(1), FailureClass::UsageLimit, Some(&at(97.0)));
+        assert_eq!(router.lift_if_recovered(SubId(1), &at(96.0)), None);
+        assert!(router.exhausted_until(SubId(1)).is_some());
+        assert!(router.lift_if_recovered(SubId(1), &at(40.0)).is_some());
+        assert_eq!(router.exhausted_until(SubId(1)), None);
+
+        router.exhaust(SubId(2), Some(&at(100.0)));
+        let all_clear = Usage {
+            limit_reached: Some(false),
+            ..at(99.0)
+        };
+        assert!(router.lift_if_recovered(SubId(2), &all_clear).is_some());
+
+        router.exhaust(SubId(3), None);
+        assert_eq!(router.lift_if_recovered(SubId(3), &at(0.0)), None);
     }
 
     #[tokio::test]

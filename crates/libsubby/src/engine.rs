@@ -1499,17 +1499,13 @@ impl State {
                 cause = "usage-poll",
                 "sub quarantined by its own allowance figures"
             );
-        } else if usage.limit_reached == Some(false)
-            && let Some(until) = self.router.exhausted_until(id)
-        {
-            // Only the provider's explicit all-clear ends a quarantine early: the
-            // percentage cannot stand in, since the usage endpoint lags the verdict.
-            self.router.clear_exhaustion(id);
+        } else if let Some(until) = self.router.lift_if_recovered(id, &usage) {
             tracing::info!(
                 target: "sub.recovered",
                 sub = %id,
                 was_until = %until,
-                "quarantine lifted: the provider says the account is within its limits"
+                pct = balance::effective_pct(&usage),
+                "quarantine lifted: the account's own figures show it within its limits"
             );
         }
 
@@ -2507,24 +2503,14 @@ proxy {
     }
 
     #[tokio::test]
-    async fn the_providers_all_clear_lifts_a_quarantine_early() {
+    async fn a_poll_showing_an_early_reset_lifts_a_quarantine() {
         let harness = Harness::new("engine-unquarantine", PROXY_OFF);
-        let full = Usage {
-            session: Some(UsageWindow::from_pct(100.0)),
+        let weekly = |pct| Usage {
+            weekly: Some(UsageWindow::from_pct(pct)),
             ..Usage::default()
         };
-        let quiet = Usage {
-            session: Some(UsageWindow::from_pct(4.0)),
-            limit_reached: None,
-            ..Usage::default()
-        };
-        let all_clear = Usage {
-            session: Some(UsageWindow::from_pct(0.0)),
-            limit_reached: Some(false),
-            ..Usage::default()
-        };
-        let poller = ScriptedPoller::with([vec![Ok(full)], vec![Ok(quiet)], vec![Ok(all_clear)]]);
-        creds::save_to(&harness.subs_path, &[sub(Provider::Codex, "acct-1", None)])
+        let poller = ScriptedPoller::with([vec![Ok(weekly(100.0))], vec![Ok(weekly(0.0))]]);
+        creds::save_to(&harness.subs_path, &[sub(Provider::Claude, "acct-1", None)])
             .expect("seed subs.json");
 
         let (mut engine, _handle) = harness
@@ -2541,17 +2527,10 @@ proxy {
         );
 
         engine.state.poll_round(false).await;
-        assert!(
-            engine.state.router.exhausted_until(SubId(1)).is_some(),
-            "a percentage that has dropped is not a verdict: the usage endpoint \
-             lags the enforcement decision, which is what `limit_reached` is for"
-        );
-
-        engine.state.poll_round(false).await;
         assert_eq!(
             engine.state.router.exhausted_until(SubId(1)),
             None,
-            "the provider itself says the account is within its limits"
+            "usage does not fall without a reset, even one that moves no resets_at"
         );
         assert_eq!(engine.state.build_snapshot().subs[0].health, SubHealth::Ok);
     }

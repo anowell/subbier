@@ -178,7 +178,10 @@ selects once and never changes identity mid-request.
 
 **Exhaustion** is in memory only. An account confirmed at 100 percent is
 skipped until its window resets; a failed usage fetch ranks last but is never
-quarantined, because "unknown" is not "full".
+quarantined, because "unknown" is not "full". A poll ends a quarantine early
+only on the provider's all-clear or a reading well below the one it was
+quarantined at: the usage endpoint lags a cut-off, but a fall is an early
+reset (`sub-bz3`).
 
 **Failures are named**, because collapsing them burns every account on one bad
 request. A 429 is classified by its body: a usage-limit body rotates and
